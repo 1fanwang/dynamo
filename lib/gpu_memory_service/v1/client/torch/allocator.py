@@ -52,7 +52,7 @@ class _AllocatorCallbacks:
 
 
 class SnapshotTorchPool:
-    """Own one temporary GMS pool and one retained native workspace pool."""
+    """Own the temporary GMS model-load pool."""
 
     def __init__(self, manager: SnapshotMemoryManager):
         import torch
@@ -76,7 +76,6 @@ class SnapshotTorchPool:
             self.model_load: torch.cuda.MemPool | None = torch.cuda.MemPool(
                 allocator=self._pluggable_allocator.allocator()
             )
-            self.native_workspace = torch.cuda.MemPool()
 
     @contextmanager
     def model_load_pool(self) -> "Iterator[None]":
@@ -94,14 +93,6 @@ class SnapshotTorchPool:
             with self._condition:
                 self._active_scope = False
                 self._condition.notify_all()
-
-    @contextmanager
-    def native_workspace_pool(self) -> "Iterator[None]":
-        with self._torch.cuda.device(self.device):
-            with self._torch.cuda.use_mem_pool(
-                self.native_workspace, device=self.device
-            ):
-                yield
 
     def finalize_model_load(self, model: object) -> None:
         """Normalize live storages and destroy the temporary GMS pool."""

@@ -21,78 +21,41 @@ pytestmark = [
 @pytest.fixture(scope="module")
 def vllm_modules():
     pytest.importorskip("vllm.device_allocator.sleep_mode_backend")
-    pytest.importorskip("vllm.model_executor.model_loader.base_loader")
+    loader_module = pytest.importorskip("vllm.model_executor.model_loader.base_loader")
     pytest.importorskip("vllm.v1.worker.gpu_worker")
-    pytest.importorskip("vllm.v1.worker.workspace")
     backend = importlib.import_module("gpu_memory_service.v1.integrations.vllm.backend")
     patches = importlib.import_module("gpu_memory_service.v1.integrations.vllm.patches")
     worker = importlib.import_module("gpu_memory_service.v1.integrations.vllm.worker")
-    return backend, patches, worker
+    return backend, loader_module.BaseModelLoader, patches, worker
 
 
-def test_worker_installs_loader_patch_and_uses_native_cumem_only_for_kv_cache(
+def test_worker_selects_and_eagerly_constructs_backend_after_device_init(
     vllm_modules,
     monkeypatch,
 ) -> None:
-    backend, _patches, worker_module = vllm_modules
+    backend, _base_loader, _patches, worker_module = vllm_modules
     events = []
-    workspace = object()
-    client = SimpleNamespace(close=lambda: events.append("client_close"))
-    manager = object()
-    pool = object()
-    runtime = SimpleNamespace(manager=manager, pool=pool)
+    backend_instance = object()
 
     def upstream_init(instance) -> None:
         events.append("upstream_init")
-        instance.device = SimpleNamespace(index=3)
+        instance.device = torch.device("cuda:3")
 
-    monkeypatch.setattr(worker_module.Worker, "init_device", upstream_init)
+    def get_backend(instance):
+        events.append(("get_backend", instance.device))
+        return backend_instance
 
     @contextmanager
     def native_pool(tag):
         events.append(("native_pool", tag))
         yield
 
+    monkeypatch.setattr(worker_module.Worker, "init_device", upstream_init)
+    monkeypatch.setattr(worker_module.Worker, "_get_sleep_mode_backend", get_backend)
     monkeypatch.setattr(
         worker_module.Worker,
         "_maybe_get_memory_pool_context",
         lambda _instance, tag: native_pool(tag),
-    )
-    monkeypatch.setattr(worker_module, "current_workspace_manager", lambda: workspace)
-    monkeypatch.setattr(
-        worker_module, "get_socket_path", lambda device, tag: f"/{device}/{tag}"
-    )
-    monkeypatch.setattr(
-        worker_module,
-        "AllocationClient",
-        lambda path: events.append(("client", path)) or client,
-    )
-    monkeypatch.setattr(worker_module, "get_vmm", lambda: "vmm")
-    monkeypatch.setattr(
-        worker_module,
-        "SnapshotMemoryManager",
-        lambda received_client, vmm, device: (
-            events.append(("manager", received_client, vmm, device)) or manager
-        ),
-    )
-    monkeypatch.setattr(
-        worker_module,
-        "SnapshotTorchPool",
-        lambda received: events.append(("pool", received)) or pool,
-    )
-    monkeypatch.setattr(
-        worker_module,
-        "install_vllm_integration",
-        lambda received_workspace, received_pool: events.append(
-            ("install", received_workspace, received_pool)
-        ),
-    )
-    monkeypatch.setattr(
-        worker_module,
-        "install_runtime",
-        lambda received_manager, received_pool: (
-            events.append(("runtime", received_manager, received_pool)) or runtime
-        ),
     )
 
     worker = object.__new__(worker_module.GMSV1Worker)
@@ -111,149 +74,255 @@ def test_worker_installs_loader_patch_and_uses_native_cumem_only_for_kv_cache(
         events.append("kv_cache_scope")
     assert events == [
         "upstream_init",
-        ("client", "/3/snapshot-v1"),
-        ("manager", client, "vmm", 3),
-        ("pool", manager),
-        ("install", workspace, pool),
-        ("runtime", manager, pool),
+        ("get_backend", torch.device("cuda:3")),
         "weights_scope",
         ("native_pool", "kv_cache"),
         "kv_cache_scope",
     ]
 
 
-def test_loader_only_uses_gms_and_workspace_growth_uses_native_pool(
+def test_worker_requires_sleep_mode_before_device_init(
     vllm_modules,
     monkeypatch,
 ) -> None:
-    _backend, patches, _worker = vllm_modules
-    from vllm.model_executor.model_loader.base_loader import BaseModelLoader
-
-    events = []
-    model = torch.nn.Module()
-
-    @contextmanager
-    def scope(name):
-        events.append(f"{name}_enter")
-        yield
-        events.append(f"{name}_exit")
-
-    pool = SimpleNamespace(
-        model_load_pool=lambda: scope("gms"),
-        native_workspace_pool=lambda: scope("native"),
-        finalize_model_load=lambda received: events.append(
-            ("finalize", received, list(events))
-        ),
-        abort_model_load=lambda cause: events.append(("abort", cause)),
+    _backend, _base_loader, _patches, worker_module = vllm_modules
+    monkeypatch.setattr(
+        worker_module.Worker,
+        "init_device",
+        lambda _instance: pytest.fail("device initialization must not run"),
     )
-    workspace = SimpleNamespace(
-        _current_workspaces=[None],
-        _workspace_size_bytes=lambda current: 0 if current is None else current,
+    worker = object.__new__(worker_module.GMSV1Worker)
+    worker.vllm_config = SimpleNamespace(
+        model_config=SimpleNamespace(
+            enable_sleep_mode=False,
+            sleep_mode_backend="cumem",
+        )
     )
 
-    def workspace_growth(required_bytes):
-        events.append(("workspace_growth", required_bytes))
-        workspace._current_workspaces[0] = required_bytes
-        return required_bytes
-
-    workspace._ensure_workspace_size = workspace_growth
-    original = BaseModelLoader.load_model
-
-    def normal_loader(_loader, *args, **kwargs):
-        events.append("base_loader")
-        return model
-
-    monkeypatch.setattr(BaseModelLoader, "load_model", normal_loader)
-    monkeypatch.setattr("vllm.v1.worker.workspace.dbo_current_ubatch_id", lambda: 0)
-    try:
-        patches.install_vllm_integration(workspace, pool)
-        assert BaseModelLoader.load_model(object()) is model
-        events.append("v2_post_loader_runtime")
-        assert workspace._ensure_workspace_size(4096) == 4096
-    finally:
-        BaseModelLoader.load_model = original
-
-    assert events[:5] == [
-        "gms_enter",
-        "base_loader",
-        "gms_exit",
-        ("finalize", model, ["gms_enter", "base_loader", "gms_exit"]),
-        "v2_post_loader_runtime",
-    ]
-    assert events[5:] == [
-        "native_enter",
-        ("workspace_growth", 4096),
-        "native_exit",
-    ]
+    with pytest.raises(RuntimeError, match="requires vLLM sleep mode"):
+        worker.init_device()
 
 
-def test_backend_discards_native_kv_and_restores_gms_before_native_kv(
+def test_backend_owns_gms_resources_and_composes_native_kv_lifecycle(
     vllm_modules,
     monkeypatch,
 ) -> None:
-    backend, _patches, worker_module = vllm_modules
+    backend, _base_loader, _patches, _worker = vllm_modules
     events = []
+    client = SimpleNamespace(close=lambda: events.append("client_close"))
+    manager = SimpleNamespace(wake=lambda: events.append("gms_wake"))
+    pool = SimpleNamespace(prepare_snapshot=lambda: events.append("gms_sleep"))
     allocator = SimpleNamespace(
         sleep=lambda offload_tags: events.append(("native_sleep", offload_tags)),
         wake_up=lambda tags: events.append(("native_wake", tags)),
     )
-    runtime = SimpleNamespace(
-        pool=SimpleNamespace(prepare_snapshot=lambda: events.append("gms_sleep")),
-        manager=SimpleNamespace(wake=lambda: events.append("gms_wake")),
+
+    monkeypatch.setattr(backend.torch.cuda, "current_device", lambda: 3)
+    monkeypatch.setattr(
+        backend,
+        "get_socket_path",
+        lambda device, tag: events.append(("socket", device, tag)) or "/gms.sock",
     )
-    monkeypatch.setattr(backend, "current_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        backend,
+        "AllocationClient",
+        lambda path: events.append(("client", path)) or client,
+    )
+    monkeypatch.setattr(backend, "get_vmm", lambda: "vmm")
+    monkeypatch.setattr(
+        backend,
+        "SnapshotMemoryManager",
+        lambda received_client, vmm, device: (
+            events.append(("manager", received_client, vmm, device)) or manager
+        ),
+    )
+    monkeypatch.setattr(
+        backend,
+        "SnapshotTorchPool",
+        lambda received_manager: events.append(("pool", received_manager)) or pool,
+    )
+    monkeypatch.setattr(
+        backend,
+        "install_model_loader_patch",
+        lambda received_pool: events.append(("install_loader", received_pool)),
+    )
     monkeypatch.setattr(
         "vllm.device_allocator.get_mem_allocator_instance", lambda: allocator
     )
 
     instance = backend.GMSV1SleepModeBackend()
-    instance.suspend()
-    worker = object.__new__(worker_module.GMSV1Worker)
-    worker._sleep_mode_backend = instance
-    worker._sleep_saved_buffers = {}
-    worker._sleep_rebuild_draft_metadata_buffers = False
-    worker.model_runner = SimpleNamespace(
-        post_kv_cache_wake_up=lambda: events.append("post_kv_cache_wake")
-    )
-    worker.wake_up()
 
+    assert instance._client is client
+    assert instance._manager is manager
+    assert instance._pool is pool
+    with pytest.raises(ValueError, match="level 1"):
+        instance.suspend(2)
+    instance.suspend()
+    with pytest.raises(ValueError, match="partial-tag"):
+        instance.resume(["weights"])
+    instance.resume()
+
+    assert events == [
+        ("socket", 3, "snapshot-v1"),
+        ("client", "/gms.sock"),
+        ("manager", client, "vmm", 3),
+        ("pool", manager),
+        ("install_loader", pool),
+        ("native_sleep", ("weights",)),
+        "gms_sleep",
+        "gms_wake",
+        ("native_wake", None),
+    ]
+    assert instance.state() == "RUNNING"
+
+
+def test_backend_exits_on_partial_suspend_and_resume_failures(
+    vllm_modules,
+    monkeypatch,
+) -> None:
+    backend, _base_loader, _patches, _worker = vllm_modules
+    events = []
+    suspend_failure = RuntimeError("GMS suspend failed")
+    resume_failure = RuntimeError("native resume failed")
+
+    def fail_gms_suspend():
+        events.append("gms_sleep")
+        raise suspend_failure
+
+    def fail_native_resume(tags):
+        events.append(("native_wake", tags))
+        raise resume_failure
+
+    allocator = SimpleNamespace(
+        sleep=lambda offload_tags: events.append(("native_sleep", offload_tags)),
+        wake_up=fail_native_resume,
+    )
+    monkeypatch.setattr(
+        "vllm.device_allocator.get_mem_allocator_instance", lambda: allocator
+    )
+
+    instance = object.__new__(backend.GMSV1SleepModeBackend)
+    backend.CuMemBackend.__init__(instance)
+    instance._pool = SimpleNamespace(prepare_snapshot=fail_gms_suspend)
+    instance._manager = SimpleNamespace(wake=lambda: events.append("gms_wake"))
+
+    with pytest.raises(SystemExit) as suspend_exit:
+        instance.suspend()
+    assert suspend_exit.value.code == 1
+    assert suspend_exit.value.__cause__ is suspend_failure
+
+    with pytest.raises(SystemExit) as resume_exit:
+        instance.resume()
+    assert resume_exit.value.code == 1
+    assert resume_exit.value.__cause__ is resume_failure
     assert events == [
         ("native_sleep", ("weights",)),
         "gms_sleep",
         "gms_wake",
         ("native_wake", None),
-        "post_kv_cache_wake",
     ]
-    assert instance.state() == "RUNNING"
 
 
-def test_worker_rejects_partial_lifecycle_and_exits_on_transition_failure(
+def test_backend_closes_client_on_partial_construction_failure(
     vllm_modules,
     monkeypatch,
 ) -> None:
-    _backend, _patches, worker_module = vllm_modules
+    backend, _base_loader, _patches, _worker = vllm_modules
     events = []
+    client = SimpleNamespace(close=lambda: events.append("client_close"))
 
-    def fail_sleep(_instance, level=1):
-        events.append(("sleep", level))
-        raise RuntimeError("partial suspend")
+    monkeypatch.setattr(backend.torch.cuda, "current_device", lambda: 2)
+    monkeypatch.setattr(backend, "get_socket_path", lambda _device, _tag: "/gms.sock")
+    monkeypatch.setattr(backend, "AllocationClient", lambda _path: client)
+    monkeypatch.setattr(backend, "get_vmm", lambda: "vmm")
 
-    def fail_wake(_instance, tags=None):
-        events.append(("wake_up", tags))
-        raise RuntimeError("partial resume")
+    def fail_manager(_client, _vmm, _device):
+        raise RuntimeError("manager failed")
 
-    monkeypatch.setattr(worker_module.Worker, "sleep", fail_sleep)
-    monkeypatch.setattr(worker_module.Worker, "wake_up", fail_wake)
-    worker = object.__new__(worker_module.GMSV1Worker)
+    monkeypatch.setattr(backend, "SnapshotMemoryManager", fail_manager)
 
-    with pytest.raises(ValueError, match="whole-engine"):
-        worker.sleep(2)
-    with pytest.raises(ValueError, match="partial-tag"):
-        worker.wake_up(["weights"])
-    assert events == []
+    with pytest.raises(RuntimeError, match="manager failed"):
+        backend.GMSV1SleepModeBackend()
 
-    with pytest.raises(SystemExit, match="1"):
-        worker.sleep()
-    with pytest.raises(SystemExit, match="1"):
-        worker.wake_up()
-    assert events == [("sleep", 1), ("wake_up", None)]
+    assert events == ["client_close"]
+
+
+def test_model_loader_patch_finalizes_after_leaving_gms_pool(
+    vllm_modules,
+    monkeypatch,
+) -> None:
+    _backend, base_loader, patches, _worker = vllm_modules
+
+    events = []
+    model = torch.nn.Module()
+
+    @contextmanager
+    def model_load_pool():
+        events.append("pool_enter")
+        try:
+            yield
+        finally:
+            events.append("pool_exit")
+
+    pool = SimpleNamespace(
+        model_load_pool=model_load_pool,
+        finalize_model_load=lambda received: events.append(("finalize", received)),
+        abort_model_load=lambda cause: events.append(("abort", cause)),
+    )
+
+    def normal_loader(_loader, *args, **kwargs):
+        events.append(("load", args, kwargs))
+        return model
+
+    monkeypatch.setattr(base_loader, "load_model", normal_loader)
+    patches.install_model_loader_patch(pool)
+
+    assert base_loader.load_model(object(), "config", prefix="model") is model
+    assert events == [
+        "pool_enter",
+        ("load", ("config",), {"prefix": "model"}),
+        "pool_exit",
+        ("finalize", model),
+    ]
+
+
+def test_model_loader_patch_aborts_and_propagates_load_failure(
+    vllm_modules,
+    monkeypatch,
+) -> None:
+    _backend, base_loader, patches, _worker = vllm_modules
+
+    events = []
+    failure = RuntimeError("load failed")
+
+    @contextmanager
+    def model_load_pool():
+        events.append("pool_enter")
+        try:
+            yield
+        finally:
+            events.append("pool_exit")
+
+    pool = SimpleNamespace(
+        model_load_pool=model_load_pool,
+        finalize_model_load=lambda _model: pytest.fail("must not finalize"),
+        abort_model_load=lambda cause: events.append(("abort", cause)),
+    )
+
+    def failing_loader(_loader, *args, **kwargs):
+        events.append("load")
+        raise failure
+
+    monkeypatch.setattr(base_loader, "load_model", failing_loader)
+    patches.install_model_loader_patch(pool)
+
+    with pytest.raises(RuntimeError, match="load failed") as raised:
+        base_loader.load_model(object())
+
+    assert raised.value is failure
+    assert events == [
+        "pool_enter",
+        "load",
+        "pool_exit",
+        ("abort", failure),
+    ]

@@ -5,20 +5,15 @@
 
 from __future__ import annotations
 
-from types import MethodType
 from typing import Any
+
+from vllm.model_executor.model_loader.base_loader import BaseModelLoader
 
 from ...client.torch import SnapshotTorchPool
 
 
-def install_vllm_integration(
-    workspace_manager: Any,
-    pool: SnapshotTorchPool,
-) -> None:
-    """Wrap the current BaseModelLoader and native workspace growth paths."""
-    from vllm.model_executor.model_loader.base_loader import BaseModelLoader
-    from vllm.v1.worker.workspace import dbo_current_ubatch_id
-
+def install_model_loader_patch(pool: SnapshotTorchPool) -> None:
+    """Run the normal vLLM model loader in the GMS model-load pool."""
     original_load_model = BaseModelLoader.load_model
 
     def load_model(loader: Any, *args: Any, **kwargs: Any) -> Any:
@@ -27,20 +22,8 @@ def install_vllm_integration(
                 model = original_load_model(loader, *args, **kwargs)
         except Exception as cause:
             pool.abort_model_load(cause)
+            raise
         pool.finalize_model_load(model)
         return model
 
     BaseModelLoader.load_model = load_model
-
-    original_workspace_growth = workspace_manager._ensure_workspace_size
-
-    def ensure_workspace_size(self: Any, required_bytes: int) -> Any:
-        current = self._current_workspaces[dbo_current_ubatch_id()]
-        if self._workspace_size_bytes(current) >= required_bytes:
-            return original_workspace_growth(required_bytes)
-        with pool.native_workspace_pool():
-            return original_workspace_growth(required_bytes)
-
-    workspace_manager._ensure_workspace_size = MethodType(
-        ensure_workspace_size, workspace_manager
-    )

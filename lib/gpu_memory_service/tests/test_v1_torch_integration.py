@@ -123,7 +123,6 @@ def test_void_free_callback_failure_surfaces_during_pool_destruction(
     pool._finalized = False
     pool.device = 0
     pool.model_load = object()
-    pool.native_workspace = object()
 
     pool._allocator.free(base, 63, 0, 0)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda _device: None)
@@ -231,15 +230,6 @@ def test_real_cuda_normalization_releases_nonparameter_mapping() -> None:
                     assert parameter_mapping.base in {
                         mapping.base for mapping in manager.mappings
                     }
-
-                    with pool.native_workspace_pool():
-                        workspace = torch.empty(
-                            4096, dtype=torch.uint8, device="cuda"
-                        )
-                    assert not any(
-                        mapping.base <= workspace.data_ptr() < mapping.end
-                        for mapping in manager.mappings
-                    )
 
                     before = tuple(
                         (mapping.base, mapping.allocation_id)

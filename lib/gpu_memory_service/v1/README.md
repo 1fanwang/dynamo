@@ -23,10 +23,10 @@ ID and size or repeating `free` is safe after response loss.
 
 ## Model loading and normalization
 
-The dedicated vLLM worker patches the existing
-`BaseModelLoader.load_model`. Model construction, normal weight loading, and
-model post-processing run in one temporary GMS-backed Torch MemPool. The
-normal vLLM load format and loader remain unchanged.
+The V1 sleep backend wraps the existing `BaseModelLoader.load_model`. Model
+construction, normal weight loading, and model post-processing run in one
+temporary GMS-backed Torch MemPool. The normal vLLM load format and loader
+remain unchanged.
 
 Immediately after `BaseModelLoader` returns, and outside the GMS pool, V1
 groups live module tensors by StorageImpl. Every complete GMS-backed storage
@@ -55,11 +55,6 @@ pool. All later runtime tensors, sampler state, CUDA graph allocations, and
 other non-Parameter allocations use the normal allocator and are preserved by
 Dynamo CUDA Snapshot.
 
-The process-global vLLM `WorkspaceManager` is the one explicit exception to
-ambient default allocation. Growth is routed into a retained native/default
-Torch MemPool so an outer allocation context cannot route workspace backing
-into GMS. No second GMS pool is created.
-
 ## Snapshot lifecycle
 
 Surviving GMS mappings are Parameter backing. They are read-write during model
@@ -80,9 +75,8 @@ addresses. It never creates fresh Parameter backing. The native backend next
 recreates KV backing at its preserved virtual addresses. Both complete before
 vLLM's existing post-KV-cache wake hook runs.
 
-Cleanup failures are fail-stop. The manager retains ownership evidence when a
-resource cannot be proved released and continues independent cleanup where
-possible.
+The manager retains ownership evidence when a resource cannot be proved
+released and continues independent cleanup where possible.
 
 ## vLLM
 
@@ -96,9 +90,13 @@ python -m dynamo.vllm ... \
 The worker selects the V1 sleep backend. Its outer `weights` allocation scope
 uses the normal/default allocator because the normal `BaseModelLoader` is
 already wrapped by the temporary GMS model-load pool. Its `kv_cache` scope
-delegates to vLLM's native tagged CuMem allocator. Only whole-engine level-1
-sleep and untagged wake are supported. A failed lifecycle transition terminates
-the worker process.
+delegates to vLLM's native tagged CuMem allocator. After vLLM initializes the
+CUDA device, the worker eagerly constructs the backend. The backend owns the
+allocation client, memory manager, Torch pool, loader patch, and composed
+sleep/wake lifecycle. Only whole-engine level-1 sleep and untagged wake are
+supported. Once a supported lifecycle transition begins, any failure terminates
+the worker process rather than returning a partially transitioned worker to
+service.
 
 This milestone has no custom model loader, load format, model manifests, meta
 model, tensor metadata, restore materialization, compatibility framework,

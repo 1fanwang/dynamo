@@ -10,26 +10,15 @@ Select explicitly with::
 
 from __future__ import annotations
 
-import logging
 from contextlib import AbstractContextManager, nullcontext
 
-from gpu_memory_service.common.utils import get_socket_path
-from gpu_memory_service.common.vmm import get_vmm
 from vllm.v1.worker.gpu_worker import Worker
-from vllm.v1.worker.workspace import current_workspace_manager
 
-from ...client.memory_manager import SnapshotMemoryManager
-from ...client.rpc import AllocationClient
-from ...client.torch import SnapshotTorchPool
 from .backend import BACKEND_NAME
-from .patches import install_vllm_integration
-from .runtime import VllmSnapshotRuntime, install_runtime
-
-logger = logging.getLogger(__name__)
 
 
 class GMSV1Worker(Worker):
-    """Use GMS V1 only for vLLM's normal BaseModelLoader execution."""
+    """Select GMS V1 while preserving vLLM's native allocation policy."""
 
     def init_device(self) -> None:
         model_config = self.vllm_config.model_config
@@ -38,40 +27,9 @@ class GMSV1Worker(Worker):
         model_config.sleep_mode_backend = BACKEND_NAME
 
         super().init_device()
-
-        device = self.device.index
-        if device is None:
-            raise RuntimeError("GMS V1 requires an indexed CUDA device")
-        client = AllocationClient(get_socket_path(device, "snapshot-v1"))
-        try:
-            manager = SnapshotMemoryManager(client, get_vmm(), device)
-            pool = SnapshotTorchPool(manager)
-            install_vllm_integration(current_workspace_manager(), pool)
-            runtime = install_runtime(manager, pool)
-        except BaseException:
-            client.close()
-            raise
-        self._gms_v1_runtime: VllmSnapshotRuntime = runtime
+        self._get_sleep_mode_backend()
 
     def _maybe_get_memory_pool_context(self, tag: str) -> AbstractContextManager[None]:
         if tag == "weights":
             return nullcontext()
         return super()._maybe_get_memory_pool_context(tag)
-
-    def sleep(self, level: int = 1) -> None:
-        if level != 1:
-            raise ValueError("GMS V1 supports only whole-engine level 1 suspend")
-        try:
-            super().sleep(level)
-        except Exception as cause:
-            logger.exception("GMS V1 suspend failed; terminating the worker process")
-            raise SystemExit(1) from cause
-
-    def wake_up(self, tags: list[str] | None = None) -> None:
-        if tags is not None:
-            raise ValueError("GMS V1 does not support partial-tag resume")
-        try:
-            super().wake_up(tags)
-        except Exception as cause:
-            logger.exception("GMS V1 resume failed; terminating the worker process")
-            raise SystemExit(1) from cause
