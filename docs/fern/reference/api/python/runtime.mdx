@@ -41,7 +41,7 @@ Source: [`lib/bindings/python/src/dynamo/runtime/__init__.py`](https://github.co
 | `configure_sglang_logging` | SGLang allows us to create a custom logging config file | [`lib/bindings/python/src/dynamo/runtime/logging.py#L218`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/logging.py#L218) |
 | `configure_vllm_logging` | Configure vLLM logging for the main process and subprocesses. | [`lib/bindings/python/src/dynamo/runtime/logging.py#L255`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/logging.py#L255) |
 | `construct_formatter_prefix` | - | [`lib/bindings/python/src/dynamo/runtime/logging.py#L129`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/logging.py#L129) |
-| `dynamo_endpoint` | - | [`lib/bindings/python/src/dynamo/runtime/__init__.py#L54`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/__init__.py#L54) |
+| `dynamo_endpoint` | Decorator that parses incoming requests into Pydantic models on an async generator endpoint. | [`lib/bindings/python/src/dynamo/runtime/__init__.py#L54`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/__init__.py#L54) |
 | `dynamo_worker` | Decorator that creates a DistributedRuntime and passes it to the worker function. | [`lib/bindings/python/src/dynamo/runtime/__init__.py#L21`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/__init__.py#L21) |
 | `get_bool_env_var` | - | [`lib/bindings/python/src/dynamo/runtime/logging.py#L317`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/logging.py#L317) |
 | `log_level_mapping` | The DYN_LOG variable is set using "debug" or "trace" or "info. | [`lib/bindings/python/src/dynamo/runtime/logging.py#L174`](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/src/dynamo/runtime/logging.py#L174) |
@@ -192,7 +192,7 @@ construct_formatter_prefix(service_name: str | None, worker_id: int | None) -> s
 
 #### `dynamo_endpoint`
 
-No summary available.
+Decorator that parses incoming requests into Pydantic models on an async generator endpoint.
 
 Import: `from dynamo.runtime import dynamo_endpoint`
 

@@ -38,7 +38,7 @@ Source: [`components/src/dynamo/planner/__init__.py`](https://github.com/ai-dyna
 | `GlobalPlannerConnector` | Connector that delegates scaling decisions to a centralized GlobalPlanner. | [`components/src/dynamo/planner/connectors/global_planner.py#L37`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/global_planner.py#L37) |
 | `KubernetesConnector` | - | [`components/src/dynamo/planner/connectors/kubernetes.py#L61`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/kubernetes.py#L61) |
 | `ModelNameNotFoundError` | Raised when the model name is not found in the deployment | [`components/src/dynamo/planner/errors.py#L81`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/errors.py#L81) |
-| `PlannerConnector` | - | [`components/src/dynamo/planner/connectors/base.py#L22`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L22) |
+| `PlannerConnector` | Abstract base class for planner connectors that manage scaling operations. | [`components/src/dynamo/planner/connectors/base.py#L22`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L22) |
 | `PlannerEffects` | What the core returns after processing a tick. | [`components/src/dynamo/planner/core/types.py#L185`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/core/types.py#L185) |
 | `PlannerError` | Base exception for all planner-related errors. | [`components/src/dynamo/planner/errors.py#L41`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/errors.py#L41) |
 | `PlannerScalingState` | Shared in-memory scaling state for all planner modes. | [`components/src/dynamo/planner/core/state_machine.py#L48`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/core/state_machine.py#L48) |
@@ -253,14 +253,14 @@ ModelNameNotFoundError()
 
 #### `PlannerConnector`
 
-No summary available.
+Abstract base class for planner connectors that manage scaling operations.
 
 Import: `from dynamo.planner import PlannerConnector`
 
 ##### Public Methods
 
-- `add_component(sub_component_type: SubComponentType, blocking: bool = True) -> None` — Add a component to the planner ([source](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L23))
-- `remove_component(sub_component_type: SubComponentType, blocking: bool = True) -> None` — Remove a component from the planner ([source](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L30))
+- `add_component(sub_component_type: SubComponentType, blocking: bool = True) -> None` — Add a component to the planner ([source](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L32))
+- `remove_component(sub_component_type: SubComponentType, blocking: bool = True) -> None` — Remove a component from the planner ([source](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/planner/connectors/base.py#L39))
 
 #### `PlannerEffects`
 

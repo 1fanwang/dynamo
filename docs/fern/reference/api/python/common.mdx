@@ -89,10 +89,10 @@ Source: [`components/src/dynamo/common/__init__.py`](https://github.com/ai-dynam
 | `get_config_dump` | Collect comprehensive config information about a backend instance. | [`components/src/dynamo/common/config_dump/config_dumper.py#L108`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/config_dump/config_dumper.py#L108) |
 | `get_default_client` | Return the process-wide singleton client, instantiating on first call. | [`components/src/dynamo/common/http/__init__.py#L73`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/http/__init__.py#L73) |
 | `get_environment_vars` | Get relevant environment variables based on prefixes. | [`components/src/dynamo/common/config_dump/environment.py#L51`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/config_dump/environment.py#L51) |
-| `get_fs` | Initialize fsspec filesystem for the given URL. | [`components/src/dynamo/common/storage.py#L42`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L42) |
+| `get_fs` | Initialize fsspec filesystem for the given URL. | [`components/src/dynamo/common/storage.py#L43`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L43) |
 | `get_gpu_info` | Get GPU information if available. | [`components/src/dynamo/common/config_dump/system_info.py#L98`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/config_dump/system_info.py#L98) |
 | `get_lora_manager` | Return the LoRAManager singleton, or None when DYN_LORA_ENABLED is unset. | [`components/src/dynamo/common/lora/manager.py#L145`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/lora/manager.py#L145) |
-| `get_media_url` | Build a public URL for a file stored in the media filesystem. | [`components/src/dynamo/common/storage.py#L72`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L72) |
+| `get_media_url` | Build a public URL for a file stored in the media filesystem. | [`components/src/dynamo/common/storage.py#L73`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L73) |
 | `get_runtime_info` | Get Python runtime information. | [`components/src/dynamo/common/config_dump/system_info.py#L60`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/config_dump/system_info.py#L60) |
 | `get_system_info` | Get comprehensive system information. | [`components/src/dynamo/common/config_dump/system_info.py#L13`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/config_dump/system_info.py#L13) |
 | `main` | - | [`components/src/dynamo/common/recv_forward_pass_metrics.py#L89`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/recv_forward_pass_metrics.py#L89) |
@@ -101,7 +101,7 @@ Source: [`components/src/dynamo/common/__init__.py`](https://github.com/ai-dynam
 | `require_lora_load_request` | Validate the shared URI-based LoRA load request shape. | [`components/src/dynamo/common/rl/admin.py#L54`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/rl/admin.py#L54) |
 | `require_lora_unload_request` | Validate the shared LoRA unload request shape. | [`components/src/dynamo/common/rl/admin.py#L76`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/rl/admin.py#L76) |
 | `run` | - | [`components/src/dynamo/common/recv_forward_pass_metrics.py#L136`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/recv_forward_pass_metrics.py#L136) |
-| `upload_to_fs` | Upload bytes to the media filesystem and return the public URL. | [`components/src/dynamo/common/storage.py#L96`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L96) |
+| `upload_to_fs` | Upload bytes to the media filesystem and return the public URL. | [`components/src/dynamo/common/storage.py#L101`](https://github.com/ai-dynamo/dynamo/blob/main/components/src/dynamo/common/storage.py#L101) |
 
 #### `AbstractEmbeddingReceiver`
 
