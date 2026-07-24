@@ -50,9 +50,10 @@ After pool destruction, V1 validates storage-level ownership:
   surviving GMS mapping unless it has the exact Parameter StorageImpl.
 
 This normalization completes before memory profiling, KV-cache allocation,
-warmup, or CUDA graph capture. All later vLLM runtime tensors, sampler state,
-KV cache, and other non-Parameter allocations use the normal allocator and are
-handled by Dynamo CUDA Snapshot.
+warmup, or CUDA graph capture. The KV cache uses vLLM's native tagged CuMem
+pool. All later runtime tensors, sampler state, CUDA graph allocations, and
+other non-Parameter allocations use the normal allocator and are preserved by
+Dynamo CUDA Snapshot.
 
 The process-global vLLM `WorkspaceManager` is the one explicit exception to
 ambient default allocation. Growth is routed into a retained native/default
@@ -62,7 +63,9 @@ into GMS. No second GMS pool is created.
 ## Snapshot lifecycle
 
 Surviving GMS mappings are Parameter backing. They are read-write during model
-load. On sleep, V1:
+load. Native CuMem mappings are exclusively KV-cache backing. Level-1 sleep
+first invokes vLLM's native backend. Because native CuMem contains no weights,
+it retains no backing and discards the KV cache without a CPU backup. V1 then:
 
 1. synchronizes the GPU;
 2. changes every surviving mapping to read-only;
@@ -73,7 +76,9 @@ load. On sleep, V1:
 Before wake exports or imports anything, the client opens a fresh Unix-domain
 socket and verifies the stored sidecar nonce and GPU identity. Wake then
 exports the same allocation IDs and maps them read-only at the same virtual
-addresses. It never creates fresh backing.
+addresses. It never creates fresh Parameter backing. The native backend next
+recreates KV backing at its preserved virtual addresses. Both complete before
+vLLM's existing post-KV-cache wake hook runs.
 
 Cleanup failures are fail-stop. The manager retains ownership evidence when a
 resource cannot be proved released and continues independent cleanup where
@@ -88,10 +93,12 @@ python -m dynamo.vllm ... \
   --worker-cls gpu_memory_service.v1.integrations.vllm.worker.GMSV1Worker
 ```
 
-The worker selects the V1 sleep backend and leaves vLLM's native `weights` and
-`kv_cache` allocator scopes on the normal/default allocator. Only whole-engine
-level-1 sleep and untagged wake are supported. A failed lifecycle transition
-terminates the worker process.
+The worker selects the V1 sleep backend. Its outer `weights` allocation scope
+uses the normal/default allocator because the normal `BaseModelLoader` is
+already wrapped by the temporary GMS model-load pool. Its `kv_cache` scope
+delegates to vLLM's native tagged CuMem allocator. Only whole-engine level-1
+sleep and untagged wake are supported. A failed lifecycle transition terminates
+the worker process.
 
 This milestone has no custom model loader, load format, model manifests, meta
 model, tensor metadata, restore materialization, compatibility framework,

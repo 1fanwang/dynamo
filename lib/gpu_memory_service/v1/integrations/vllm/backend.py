@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from vllm.device_allocator.sleep_mode_backend import (
-    SleepModeBackend,
+    CuMemBackend,
     SleepModeBackendFactory,
 )
 
@@ -15,8 +15,8 @@ from .runtime import current_runtime
 BACKEND_NAME = "gms-v1-snapshot"
 
 
-class GMSV1SleepModeBackend(SleepModeBackend):
-    """Drive V1 pool sleep and wake for the dedicated worker."""
+class GMSV1SleepModeBackend(CuMemBackend):
+    """Compose native KV-cache sleep with GMS V1 parameter sleep."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -28,8 +28,8 @@ class GMSV1SleepModeBackend(SleepModeBackend):
         if self._state != "RUNNING":
             raise RuntimeError(f"cannot suspend GMS V1 from {self._state}")
 
+        super().suspend(level)
         self._pool.prepare_snapshot()
-        self._state = "SUSPENDED"
 
     def resume(self, tags: list[str] | None = None) -> None:
         if self._state != "SUSPENDED":
@@ -37,7 +37,7 @@ class GMSV1SleepModeBackend(SleepModeBackend):
 
         self._state = "RESUMING"
         self._manager.wake()
-        self._state = "RUNNING"
+        super().resume(tags)
 
 
 SleepModeBackendFactory.register_backend(

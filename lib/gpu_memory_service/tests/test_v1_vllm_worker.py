@@ -30,7 +30,7 @@ def vllm_modules():
     return backend, patches, worker
 
 
-def test_worker_installs_loader_patch_and_leaves_vllm_scopes_default(
+def test_worker_installs_loader_patch_and_uses_native_cumem_only_for_kv_cache(
     vllm_modules,
     monkeypatch,
 ) -> None:
@@ -47,6 +47,17 @@ def test_worker_installs_loader_patch_and_leaves_vllm_scopes_default(
         instance.device = SimpleNamespace(index=3)
 
     monkeypatch.setattr(worker_module.Worker, "init_device", upstream_init)
+
+    @contextmanager
+    def native_pool(tag):
+        events.append(("native_pool", tag))
+        yield
+
+    monkeypatch.setattr(
+        worker_module.Worker,
+        "_maybe_get_memory_pool_context",
+        lambda _instance, tag: native_pool(tag),
+    )
     monkeypatch.setattr(worker_module, "current_workspace_manager", lambda: workspace)
     monkeypatch.setattr(
         worker_module, "get_socket_path", lambda device, tag: f"/{device}/{tag}"
@@ -94,8 +105,10 @@ def test_worker_installs_loader_patch_and_leaves_vllm_scopes_default(
     worker.init_device()
 
     assert worker.vllm_config.model_config.sleep_mode_backend == backend.BACKEND_NAME
-    assert worker._maybe_get_memory_pool_context("weights").__enter__() is None
-    assert worker._maybe_get_memory_pool_context("kv_cache").__enter__() is None
+    with worker._maybe_get_memory_pool_context("weights"):
+        events.append("weights_scope")
+    with worker._maybe_get_memory_pool_context("kv_cache"):
+        events.append("kv_cache_scope")
     assert events == [
         "upstream_init",
         ("client", "/3/snapshot-v1"),
@@ -103,6 +116,9 @@ def test_worker_installs_loader_patch_and_leaves_vllm_scopes_default(
         ("pool", manager),
         ("install", workspace, pool),
         ("runtime", manager, pool),
+        "weights_scope",
+        ("native_pool", "kv_cache"),
+        "kv_cache_scope",
     ]
 
 
@@ -171,23 +187,43 @@ def test_loader_only_uses_gms_and_workspace_growth_uses_native_pool(
     ]
 
 
-def test_backend_orders_pool_sleep_before_reconnect_wake(
+def test_backend_discards_native_kv_and_restores_gms_before_native_kv(
     vllm_modules,
     monkeypatch,
 ) -> None:
-    backend, _patches, _worker_module = vllm_modules
+    backend, _patches, worker_module = vllm_modules
     events = []
+    allocator = SimpleNamespace(
+        sleep=lambda offload_tags: events.append(("native_sleep", offload_tags)),
+        wake_up=lambda tags: events.append(("native_wake", tags)),
+    )
     runtime = SimpleNamespace(
-        pool=SimpleNamespace(prepare_snapshot=lambda: events.append("sleep")),
-        manager=SimpleNamespace(wake=lambda: events.append("reconnect_wake")),
+        pool=SimpleNamespace(prepare_snapshot=lambda: events.append("gms_sleep")),
+        manager=SimpleNamespace(wake=lambda: events.append("gms_wake")),
     )
     monkeypatch.setattr(backend, "current_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        "vllm.device_allocator.get_mem_allocator_instance", lambda: allocator
+    )
 
     instance = backend.GMSV1SleepModeBackend()
     instance.suspend()
-    instance.resume()
+    worker = object.__new__(worker_module.GMSV1Worker)
+    worker._sleep_mode_backend = instance
+    worker._sleep_saved_buffers = {}
+    worker._sleep_rebuild_draft_metadata_buffers = False
+    worker.model_runner = SimpleNamespace(
+        post_kv_cache_wake_up=lambda: events.append("post_kv_cache_wake")
+    )
+    worker.wake_up()
 
-    assert events == ["sleep", "reconnect_wake"]
+    assert events == [
+        ("native_sleep", ("weights",)),
+        "gms_sleep",
+        "gms_wake",
+        ("native_wake", None),
+        "post_kv_cache_wake",
+    ]
     assert instance.state() == "RUNNING"
 
 

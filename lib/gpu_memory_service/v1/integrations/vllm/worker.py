@@ -54,7 +54,9 @@ class GMSV1Worker(Worker):
         self._gms_v1_runtime: VllmSnapshotRuntime = runtime
 
     def _maybe_get_memory_pool_context(self, tag: str) -> AbstractContextManager[None]:
-        return nullcontext()
+        if tag == "weights":
+            return nullcontext()
+        return super()._maybe_get_memory_pool_context(tag)
 
     def sleep(self, level: int = 1) -> None:
         if level != 1:
